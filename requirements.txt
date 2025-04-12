@@ -1,0 +1,8 @@
+gymnasium
+stable-baselines3[extra]
+scikit-learn
+mne
+torch
+torchvision
+torchaudio
+tensorflow

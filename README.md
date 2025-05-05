@@ -1,5 +1,3 @@
-README.md
-
 # Conservative Implicit Q-Learning (CIQL) on PyBullet D4RL
 
 This repository contains a PyTorch implementation of **Conservative Implicit Q-Learning (CIQL)**,
@@ -92,6 +90,6 @@ ciql-pybullet/
 
 ## License
 MIT License
-Copyright (c) 2025 Your Name
+Copyright (c) 2025 Vivek Mirani, Garima Bansal, Madhvi Dubey
 ```
 END OF README

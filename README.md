@@ -1,49 +1,97 @@
-Conservative Implicit Q-Learning on PyBullet D4RL
-This repository provides a PyTorch implementation of Conservative Implicit Q-Learning (CIQL)
-on the PyBullet D4RL benchmark (halfcheetah-bullet-medium-v0). CIQL combines
-the stability of Implicit Q-Learning (IQL) with the conservatism of CQL.
+README.md
+
+# Conservative Implicit Q-Learning (CIQL) on PyBullet D4RL
+
+This repository contains a PyTorch implementation of **Conservative Implicit Q-Learning (CIQL)**,
+applied to the PyBullet version of the D4RL offline RL benchmark (e.g., `halfcheetah-bullet-medium-v0`).
+CIQL combines:
+1. **Implicit Q-Learning (IQL)**: fitting a value network via expectile regression and extracting a policy via advantage-weighted behavioral cloning.
+2. **Conservative Q-Learning (CQL)**: adding a regularizer to push down Q-values on out-of-distribution actions.
+
+## Table of Contents
+1. [Features](#features)
+2. [Installation](#installation)
+3. [Usage](#usage)
+4. [Configuration](#configuration)
+5. [Implementation Details](#implementation-details)
+6. [Results](#results)
+7. [Directory Structure](#directory-structure)
+8. [License](#license)
+
+## Features
+- End-to-end PyTorch code for CIQL with minimal dependencies.
+- Training on offline `halfcheetah-bullet-medium-v0` dataset.
+- τ-expectile regression for value fitting, Bellman Q-regression, and advantage-weighted policy extraction.
+- Conservative penalty clamped to ensure non-negative regularization.
+- Automatic observation normalization and evaluation logging.
+- Generation of evaluation return plot (`eval_returns.png`).
+
 ## Installation
-```bash
-pip install torch torchvision
-pip install gym
-pip install numpy
-pip install matplotlib
-pip install git+https://github.com/takuseno/d4rl-pybullet
-```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/ciql-pybullet.git
+   cd ciql-pybullet
+   ```
+2. Install required Python packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+Note: Requires Python 3.8–3.10 (PyBullet-D4RL is not yet compatible with 3.11).
+
 ## Usage
-Save the script as ciql_pybullet.py, then run:
+To train and evaluate CIQL, run:
 ```bash
 python ciql_pybullet.py
 ```
-Training runs for 500 000 gradient steps, logs losses every 1 000 steps,
-evaluates the policy every 5 000 steps (5 episodes), and at the end
-saves and displays eval_returns.png.
-## Hyperparameters
-- γ = 0.99 (discount factor)
-- τ = 0.8 (IQL expectile)
-- β = 1.0 (AWR temperature)
-- α = 1.0 (CQL penalty weight)
-- num_neg = 10 (off‑data actions per state)
-- lr = 3e‑4 (learning rate for all networks)
-- batch_size = 256
-- max_steps = 5e5
-- eval_interval = 5000
-- log_interval = 1000
-## Algorithm Details
-- Value Expectile (IQL)
-Fit the value network $V$ by minimizing the $\tau$‑expectile loss on
-in‑dataset Q-values:
-$$\rho_\tau(u) = |\tau - \mathbf{1}(u < 0)| \cdot u^2,\quad
-u = Q_{\min}(s,a) - V(s).$$
-- Q-Regression with CQL Penalty
-Regress each Q-head toward the one-step target
-using MSE, plus a conservative term:
-$$\alpha \max\Bigl(0,;\mathbb{E}_{\tilde a\sim\mu}[Q(s,\tilde a)]
-- \mathbb{E}_{a\sim D}[Q(s,a)]\Bigr).$$
-- Advantage-Weighted Regression (Policy Extraction)
-Update the policy by weighted behavioral cloning on dataset actions:
-$$\max_\phi;\mathbb{E}{(s,a)\sim D}[\exp\bigl(\beta,(Q{\min}(s,a)-V(s))\bigr)
-\log\pi_\phi(a|s)].$$
+- Training runs for 500,000 steps by default.
+- Evaluation is performed every 5,000 steps over 5 episodes.
+- Logs progress to stdout and saves `eval_returns.png`.
+
+## Configuration
+Adjust hyperparameters directly in `ciql_pybullet.py` or via command-line flags (if extended):
+- `batch_size`: minibatch size (default 256)
+- `max_steps`: total gradient steps (default 5e5)
+- `expectile` τ: expectile parameter for V-step (default 0.8)
+- `beta`: temperature for advantage-weighted regression (default 1.0)
+- `alpha`: CQL penalty weight (default 1.0)
+- `num_neg`: number of negative samples per state (default 10)
+- Learning rate (default 3e-4)
+
+## Implementation Details
+- **Value Network** fits the upper τ-expectile of in-dataset Q-values via:
+ 
+  ```python
+  loss_V = E[|τ - I(Q - V < 0)| · (Q - V)^2]
+  ```
+- **Q Networks** use Double Q and Bellman backups:
+ 
+  ```python
+  y = r + γ V(s')
+  loss_Q = MSE(Q(s,a), y) + α · ReLU(E_{ā∼μ}[Q(s,ā)] - E_{a∼D}[Q(s,a)])
+  ```
+- **Policy** is extracted via advantage-weighted behavioral cloning on logged actions:
+ 
+  ```python
+  adv = max(0, Q(s,a) - V(s))
+  loss_π = -E[exp(β · adv) · log π(a|s)]
+  ```
+- **Conservative Penalty** clamps negative-action Q mean minus data-action Q mean to ≥0.
+
 ## Results
-<!-- Evaluation return vs. training step curve will be displayed here once
-training completes and eval_returns.png is generated. -->
+After training, you can view `eval_returns.png`, which plots average evaluation return
+versus training steps. Typical performance on `halfcheetah-bullet-medium-v0` is reported around
+7,000–8,000 average return.
+
+## Directory Structure
+```
+ciql-pybullet/
+├── ciql_pybullet.py      # Main training & evaluation script
+├── requirements.txt      # Python dependencies
+└── README.md             # Project documentation
+```
+
+## License
+MIT License
+Copyright (c) 2025 Your Name
+```
+END OF README

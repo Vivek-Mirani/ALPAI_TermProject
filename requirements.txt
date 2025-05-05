@@ -1,8 +1,5 @@
-gymnasium
-stable-baselines3[extra]
-scikit-learn
-mne
-torch
-torchvision
-torchaudio
-tensorflow
+torch>=1.13.1
+gym>=0.21.0
+numpy==1.23.5
+matplotlib>=3.4.0
+git+https://github.com/takuseno/d4rl-pybullet

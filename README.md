@@ -1,4 +1,4 @@
-# Conservative Implicit Q-Learning (CIQL) on PyBullet D4RL
+# Conservative Implicit Q-Learning (CIQL)
 
 This repository contains a PyTorch implementation of **Conservative Implicit Q-Learning (CIQL)**,
 applied to the PyBullet version of the D4RL offline RL benchmark (e.g., `halfcheetah-bullet-medium-v0`).

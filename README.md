@@ -91,5 +91,3 @@ ciql-pybullet/
 ## License
 MIT License
 Copyright (c) 2025 Vivek Mirani, Garima Bansal, Madhvi Dubey
-```
-END OF README

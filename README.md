@@ -13,9 +13,7 @@ CIQL combines:
 4. [Configuration](#configuration)
 5. [Implementation Details](#implementation-details)
 6. [Results](#results)
-7. [Directory Structure](#directory-structure)
-8. [License](#license)
-
+   
 ## Features
 - End-to-end PyTorch code for CIQL with minimal dependencies.
 - Training on offline `halfcheetah-bullet-medium-v0` dataset.
@@ -41,7 +39,7 @@ To train and evaluate CIQL, run:
 ```bash
 python ciql_pybullet.py
 ```
-- Training runs for 500,000 steps by default.
+- Training runs for 200,000 steps by default.
 - Evaluation is performed every 5,000 steps over 5 episodes.
 - Logs progress to stdout and saves `eval_returns.png`.
 
@@ -79,15 +77,3 @@ Adjust hyperparameters directly in `ciql_pybullet.py` or via command-line flags 
 After training, you can view `eval_returns.png`, which plots average evaluation return
 versus training steps. Typical performance on `halfcheetah-bullet-medium-v0` is reported around
 7,000–8,000 average return.
-
-## Directory Structure
-```
-ciql-pybullet/
-├── ciql_pybullet.py      # Main training & evaluation script
-├── requirements.txt      # Python dependencies
-└── README.md             # Project documentation
-```
-
-## License
-MIT License
-Copyright (c) 2025 Vivek Mirani, Garima Bansal, Madhvi Dubey

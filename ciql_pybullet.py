@@ -1,15 +1,23 @@
-#!/usr/bin/env python3
+import os
 import gym
-import d4rl_pybullet           # registers “-bullet-” D4RL envs
+import d4rl_pybullet      # registers "-bullet-" D4RL envs
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
 import matplotlib.pyplot as plt
-# temporarily restore the old bool8 alias so Gym’s checker doesn’t break
+
+# temporarily restore the old bool8 alias for Gym’s checker
 if not hasattr(np, 'bool8'):
     np.bool8 = np.bool_
+
+#--- D4RL‐style normalization stats for PyBullet MuJoCo tasks ---
+NORMALIZATION_STATS = {
+    # 'hopper-bullet-medium-v0':    {'random': 1257.0,  'expert': 3624.0},
+    # 'walker2d-bullet-medium-v0':  {'random': 896.0,   'expert': 4005.0},
+    'halfcheetah-bullet-medium-v0': {'random': -199.0, 'expert': 12330.0},
+}
 
 # ----------------------------
 # 1) NETWORKS
@@ -50,7 +58,7 @@ class DoubleQ(nn.Module):
         return self.q1(o,a), self.q2(o,a)
 
 # ----------------------------
-# 2) TANH-GAUSSIAN POLICY
+# 2) TANH‐GAUSSIAN POLICY
 # ----------------------------
 LOG_STD_MIN, LOG_STD_MAX = -10.0, 2.0
 EPS = 1e-6
@@ -74,24 +82,11 @@ class TanhGaussianPolicy(nn.Module):
         z      = dist.rsample()
         a      = torch.tanh(z).clamp(-0.999,0.999)
         logp   = dist.log_prob(z) - torch.log(1 - a.pow(2) + EPS)
-        return a, logp.sum(-1,keepdim=True)
-
-    def log_prob(self, o, a):
-        a_ = a.clamp(-0.999,0.999)
-        z  = 0.5*(torch.log1p(a_) - torch.log1p(-a_))
-        m, s   = self(o)
-        dist   = torch.distributions.Normal(m, s)
-        logp   = dist.log_prob(z) - torch.log(1 - a_.pow(2) + EPS)
-        return logp.sum(-1,keepdim=True)
+        return a, logp.sum(-1, keepdim=True)
 
     def log_prob_raw(self, obs, act):
-        """
-        Log-prob of *raw* actions under the pre-tanh Normal(m,s).
-        Use for AWR on dataset actions (which are not in (-1,1)).
-        """
         m, s = self(obs)
         dist = torch.distributions.Normal(m, s)
-        # no tanh-correction here
         return dist.log_prob(act).sum(-1, keepdim=True)
 
 # ----------------------------
@@ -107,7 +102,7 @@ class ReplayBuffer:
         self.size     = self.obs.shape[0]
 
     def sample(self, B):
-        idx = np.random.randint(0, self.size, B)
+        idx = np.random.randint(0, self.size, size=B)
         return dict(
             obs      = self.obs[idx],
             act      = self.acts[idx],
@@ -117,11 +112,11 @@ class ReplayBuffer:
         )
 
     def sample_actions(self, n):
-        idx = np.random.randint(0, self.size, n)
+        idx = np.random.randint(0, self.size, size=n)
         return self.acts[idx]
 
 # ----------------------------
-# 4) CIQL AGENT
+# 4) AGENT (CIQL with tunable expectile & CQL weight)
 # ----------------------------
 class CIQLAgent:
     def __init__(self,
@@ -149,7 +144,7 @@ class CIQLAgent:
         self.critic_targ = DoubleQ(obs_dim, act_dim, hiddens).to(device)
         self.policy      = TanhGaussianPolicy(obs_dim, act_dim, hiddens).to(device)
 
-        # Copy weights → targets
+        # initialize target
         for p, pt in zip(self.critic.parameters(),
                          self.critic_targ.parameters()):
             pt.data.copy_(p.data)
@@ -170,7 +165,7 @@ class CIQLAgent:
         done     = torch.as_tensor(batch['done'],     device=self.device)
         B        = obs.size(0)
 
-        # 1) V-step (IQL expectile)
+        # 1) V-step (τ-expectile)
         with torch.no_grad():
             q1_t, q2_t = self.critic_targ(obs, act)
             q_bar      = torch.min(q1_t, q2_t)
@@ -178,7 +173,7 @@ class CIQLAgent:
         v_loss = self.expectile_loss(q_bar - v_pred)
         self.v_opt.zero_grad(); v_loss.backward(); self.v_opt.step()
 
-        # 2) Q-step (Bellman + clamped CQL)
+        # 2) Q-step (Bellman + CQL clamp)
         with torch.no_grad():
             v2 = self.value(next_obs).unsqueeze(-1)
             y  = rew + self.gamma * (1 - done) * v2
@@ -187,7 +182,6 @@ class CIQLAgent:
         mse1   = F.mse_loss(q1.unsqueeze(-1), y)
         mse2   = F.mse_loss(q2.unsqueeze(-1), y)
 
-        # Off-data penalty
         a_neg   = buffer.sample_actions(B * self.num_neg)
         a_neg   = torch.as_tensor(a_neg, device=self.device)
         obs_rep = obs.unsqueeze(1).repeat(1, self.num_neg, 1).view(-1, obs.size(-1))
@@ -200,7 +194,7 @@ class CIQLAgent:
         q_loss = mse1 + mse2 + self.alpha * (c1 + c2)
         self.q_opt.zero_grad(); q_loss.backward(); self.q_opt.step()
 
-        # Polyak update
+        # target update
         with torch.no_grad():
             for p, pt in zip(self.critic.parameters(),
                              self.critic_targ.parameters()):
@@ -213,48 +207,42 @@ class CIQLAgent:
             with torch.no_grad():
                 q1p, q2p = self.critic(obs, act)
                 qb       = torch.min(q1p, q2p)
-                adv      = (qb - self.value(obs)).clamp(min=0)   # [B]
+                adv      = (qb - self.value(obs)).clamp(min=0)
 
-            # stable softmax weighting
-            x      = self.beta * adv                          # [B]
-            x_max  = x.max()                                  # scalar
-            exp_x  = torch.exp(x - x_max)                     # [B], in (0,1]
-            wts    = exp_x / (exp_x.sum() + 1e-8)             # [B], sum=1
-            wts    = wts.unsqueeze(-1)                        # [B,1]
+            x      = self.beta * adv
+            x_max  = x.max()
+            exp_x  = torch.exp(x - x_max)
+            wts    = exp_x / (exp_x.sum() + 1e-8)
+            wts    = wts.unsqueeze(-1)
 
-            # raw log-prob of dataset actions (no atanh)
-            logp   = self.policy.log_prob_raw(obs, act)      # [B,1]
-            pi_loss = - (wts * logp).sum()                    # scalar
+            logp   = self.policy.log_prob_raw(obs, act)
+            pi_loss = - (wts * logp).sum()
 
-            self.pi_opt.zero_grad()
-            pi_loss.backward()
-            self.pi_opt.step()
-        
+            self.pi_opt.zero_grad(); pi_loss.backward(); self.pi_opt.step()
+
         return v_loss.item(), q_loss.item(), pi_loss.item()
 
-
 # ----------------------------
-# 5) TRAIN + PLOTTING
+# 5) TRAINING & PLOTTING
 # ----------------------------
-def train():
-    seed         = 0
-    env_name     = 'halfcheetah-bullet-medium-v0'
-    batch_size   = 256
-    max_steps    = int(5e5)
-    eval_int     = 5000
-    log_int      = 1000
+def train(env_name, technique, expectile, alpha):
+    print(f"\n=== Training {technique.upper()} on {env_name} ===")
+    seed       = 0
+    batch_size = 256
+    max_steps  = int(2e5)
+    eval_int   = 5000
+    log_int    = 1000
 
+    # 1) Env & dataset
     env = gym.make(env_name)
     env.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
-
-    ds      = env.get_dataset()
-    obs     = ds['observations']
-    acts    = ds['actions']
-    rews    = ds['rewards'].reshape(-1,1)
-    terms   = ds['terminals'].reshape(-1,1)
-    next_obs= np.concatenate([obs[1:], obs[-1:]], axis=0)
-
-    buffer = ReplayBuffer({
+    ds       = env.get_dataset()
+    obs      = ds['observations']
+    acts     = ds['actions']
+    rews     = ds['rewards'].reshape(-1,1)
+    terms    = ds['terminals'].reshape(-1,1)
+    next_obs = np.concatenate([obs[1:], obs[-1:]], axis=0)
+    buffer   = ReplayBuffer({
         'observations':      obs,
         'actions':           acts,
         'rewards':           rews,
@@ -262,16 +250,22 @@ def train():
         'terminals':         terms,
     })
 
-    # normalize
+    # 2) Norm stats
     obs_mean = obs.mean(0)
     obs_std  = obs.std(0) + 1e-3
 
+    # 3) Agent
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
-    agent   = CIQLAgent(obs_dim, act_dim, device='cuda')
+    agent   = CIQLAgent(obs_dim, act_dim,
+                        expectile=expectile, alpha=alpha,
+                        device='cuda')
 
-    eval_steps, eval_returns = [], []
+    # trackers
+    loss_steps, v_losses, q_losses, pi_losses = [], [], [], []
+    eval_steps, eval_returns, eval_norms = [], [], []
 
+    # 4) Training loop
     for step in range(1, max_steps+1):
         batch = buffer.sample(batch_size)
         batch['obs']      = (batch['obs']      - obs_mean) / obs_std
@@ -280,43 +274,99 @@ def train():
         v_l, q_l, pi_l = agent.update(batch, buffer, step)
 
         if step % log_int == 0:
+            loss_steps.append(step)
+            v_losses.append(v_l)
+            q_losses.append(q_l)
+            pi_losses.append(pi_l)
             print(f"[{step:>7}] V:{v_l:.3f}  Q:{q_l:.3f}  π:{pi_l:.3f}")
 
         if step % eval_int == 0:
             rets = []
             for _ in range(5):
-                out  = env.reset()
-                state= out[0] if isinstance(out, tuple) else out
+                o = env.reset()
+                if isinstance(o, tuple): o = o[0]
                 done, ep_ret = False, 0.0
                 while not done:
-                    s_n = (state - obs_mean) / obs_std
-                    s_t = torch.tensor(s_n, device='cuda', dtype=torch.float32).unsqueeze(0)
+                    o_n     = (o - obs_mean) / obs_std
+                    o_t     = torch.tensor(o_n, device='cuda', dtype=torch.float32).unsqueeze(0)
                     with torch.no_grad():
-                        a, _ = agent.policy.sample(s_t)
-                    a_np = a.cpu().numpy()[0]
-                    res  = env.step(a_np)
-                    if len(res)==5:
-                        state, r, done, _, _ = res
+                        a,_ = agent.policy.sample(o_t)
+                    a_np, o = a.cpu().numpy()[0], None
+                    out = env.step(a_np)
+                    if len(out)==5:
+                        o, r, done, _, _ = out
                     else:
-                        state, r, done, _    = res
+                        o, r, done, _    = out
                     ep_ret += r
                 rets.append(ep_ret)
-
             avg_ret = np.mean(rets)
+            # ==== compute normalized D4RL score manually ====
+            stats = NORMALIZATION_STATS.get(env_name, None)
+            if stats is not None:
+                Rr = stats['random']
+                Re = stats['expert']
+                norm_ret = (avg_ret - Rr) / (Re - Rr) * 100.0
+                # clamp to [0,100]
+                norm_ret = float(np.clip(norm_ret, 0.0, 100.0))
+            else:
+                norm_ret = float('nan')
             eval_steps.append(step)
             eval_returns.append(avg_ret)
-            print(f" → Eval @ {step}: {avg_ret:.1f}")
+            eval_norms.append(norm_ret)
+            print(f" → Eval @ {step}: raw={avg_ret:.1f}, norm={norm_ret:.1f}")
 
     env.close()
 
-    # Plot evaluation curve
+    # Create output folder
+    folder = f"results/{env_name}_{technique}"
+    os.makedirs(folder, exist_ok=True)
+
+    # 5) Plot & save
+    suffix = f"{env_name.replace('-', '_')}_{technique}"
+    # a) eval returns
+    plt.figure(); plt.plot(eval_steps, eval_returns, label='Eval Return')
+    plt.xlabel('Step')
+    plt.ylabel('Return')
+    plt.title(f'{technique.upper()} on {env_name}')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{folder}/eval_returns_{suffix}.png"); plt.close()
+
+    # b) training losses
     plt.figure()
-    plt.plot(eval_steps, eval_returns)
+    plt.plot(loss_steps, v_losses, label='Value Loss')
+    plt.plot(loss_steps, q_losses, label='Q Loss')
+    plt.plot(loss_steps, pi_losses, label='Policy Loss')
+    plt.xlabel('Step'); plt.ylabel('Loss'); plt.title(f'{technique.upper()} Training Losses')
+    plt.legend(); plt.grid(True)
+    plt.savefig(f"{folder}/training_losses_{suffix}.png"); plt.close()
+
+    # c) normalized scores
+    plt.figure()
+    plt.plot(eval_steps, eval_norms, label='Normalized Score')
     plt.xlabel('Training Step')
-    plt.ylabel('Average Return')
-    plt.title('CIQL Evaluation Returns')
-    plt.savefig('eval_returns.png')
+    plt.ylabel('D4RL Normalized Return (%)')
+    plt.title(f'{technique.upper()} on {env_name} (Normalized)')
+    plt.legend(); plt.grid(True)
+    plt.savefig(f"{folder}/eval_norm_returns_{suffix}.png")
     plt.show()
 
+# ----------------------------
+# 6) RUN EXPERIMENTS
+# ----------------------------
 if __name__ == '__main__':
-    train()
+    envs = [
+        # 'hopper-bullet-medium-v0',
+        # 'walker2d-bullet-medium-v0',
+        'halfcheetah-bullet-medium-v0'
+    ]
+    techniques = {
+        'ciql': (0.8, 1.0),
+        # 'iql':  (0.8, 0.0),
+        # 'cql':  (0.5, 1.0),
+        # 'ql':   (0.5, 0.0)
+    }
+
+    for env_name in envs:
+        for tech, (tau, alpha) in techniques.items():
+            train(env_name, tech, expectile=tau, alpha=alpha)

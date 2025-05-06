@@ -1,11 +1,11 @@
-Conservative Implicit Q-Learning (CIQL)
+# Conservative Implicit Q-Learning (CIQL)
 
 This repository contains a PyTorch implementation of **Conservative Implicit Q-Learning (CIQL)**,
 applied to the PyBullet version of the D4RL offline RL benchmark (currently only
 `halfcheetah-bullet-medium-v0` is supported).
 
 ------------------------------------------------------------
-1. Features
+## 1. Features
 ------------------------------------------------------------
 - End-to-end PyTorch code for CIQL, combining IQL's expectile-based value fitting
   with CQL's conservative penalty.
@@ -15,7 +15,7 @@ applied to the PyBullet version of the D4RL offline RL benchmark (currently only
 - Output of evaluation return plots (`eval_returns.png`) and normalized score tracking.
 
 ------------------------------------------------------------
-2. Installation
+## 2. Installation
 ------------------------------------------------------------
 Clone the repository and install dependencies:
 ```bash
@@ -28,7 +28,7 @@ pip install -r requirements.txt
 environment should work.
 
 ------------------------------------------------------------
-3. Usage
+## 3. Usage
 ------------------------------------------------------------
 To train and evaluate CIQL, run:
 ```bash
@@ -40,7 +40,7 @@ python ciql_pybullet.py
 - **Outputs:** saved plots in `results/halfcheetah-bullet-medium-v0_ciql/`.
 
 ------------------------------------------------------------
-4. Configuration
+## 4. Configuration
 ------------------------------------------------------------
 Hyperparameters can be modified directly in `ciql_pybullet.py`:
 ```python
@@ -54,7 +54,7 @@ lr         = 3e-4        # shared learning rate
 ```
 
 ------------------------------------------------------------
-5. Implementation Details
+## 5. Implementation Details
 ------------------------------------------------------------
 - **Value Network** (MLP, 256–256): fits the τ-expectile of in-dataset Q-values.
 - **Double Q-Networks** (MLP, 256–256): minimize Bellman error + clamped CQL penalty.
@@ -80,7 +80,7 @@ loss_pi= -(weights * policy.log_prob_raw(s,a)).sum()
 ```
 
 ------------------------------------------------------------
-6. Results
+## 6. Results
 ------------------------------------------------------------
 After training, view `results/halfcheetah-bullet-medium-v0_ciql/eval_returns.png`.
 Typical raw returns reach ~830 and normalized scores ~8.2% on this dataset.

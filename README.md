@@ -45,7 +45,7 @@ python ciql_pybullet.py
 Hyperparameters can be modified directly in `ciql_pybullet.py`:
 ```python
 batch_size = 256
-max_steps  = 120_000
+max_steps  = 200_000
 expectile  = 0.8         # τ for V-step
 beta       = 1.0         # AWR temperature
 alpha      = 1.0         # CQL penalty weight
